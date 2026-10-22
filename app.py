@@ -130,7 +130,7 @@ def upsert_word():
             "parent": {"database_id": DATABASE_ID},
             "properties": {
                 "單字": {"title": [{"text": {"content": word}}]},
-                "中文解釋": {"rich_text": [{"text": {"content": translation}}]},
+                "中文": {"rich_text": [{"text": {"content": translation}}]},
                 "查詢次數": {"number": 1}
             }
         }
