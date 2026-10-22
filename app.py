@@ -13,7 +13,6 @@ HEADERS = {
     "Notion-Version": "2022-06-28"
 }
 
-# 前端網頁介面
 @app.route('/', methods=['GET'])
 def home():
     return """
@@ -54,11 +53,16 @@ def home():
                 })
                 .then(r => r.json())
                 .then(data => {
-                    msgSpan.style.color = "#4ade80";
-                    msgSpan.innerText = data.message || data.error;
-                    document.getElementById('word').value = '';
-                    document.getElementById('trans').value = '';
-                    setTimeout(() => msgSpan.innerText = '', 4000); // 4秒後清除提示
+                    if (data.error) {
+                        msgSpan.style.color = "#f87171"; // 顯示紅色錯誤
+                        msgSpan.innerText = data.error;
+                    } else {
+                        msgSpan.style.color = "#4ade80"; // 顯示綠色成功
+                        msgSpan.innerText = data.message;
+                        document.getElementById('word').value = '';
+                        document.getElementById('trans').value = '';
+                        setTimeout(() => msgSpan.innerText = '', 4000);
+                    }
                 })
                 .catch(err => { 
                     msgSpan.style.color = "#f87171";
@@ -70,7 +74,6 @@ def home():
     </html>
     """
 
-# 資料庫處理邏輯
 @app.route('/upsert_word', methods=['POST'])
 def upsert_word():
     data = request.json
@@ -81,14 +84,17 @@ def upsert_word():
         return jsonify({"error": "單字不能為空"}), 400
 
     search_url = f"https://api.notion.com/v1/databases/{DATABASE_ID}/query"
-    search_payload = {
-        "filter": {"property": "單字", "title": {"equals": word}}
-    }
+    search_payload = {"filter": {"property": "單字", "title": {"equals": word}}}
     
-    response = requests.post(search_url, json=search_payload, headers=HEADERS)
-    results = response.json().get('results', [])
+    # 1. 搜尋單字並檢查錯誤
+    search_res = requests.post(search_url, json=search_payload, headers=HEADERS)
+    if search_res.status_code != 200:
+        return jsonify({"error": f"搜尋失敗: {search_res.json().get('message', '未知錯誤')}"}), 400
+        
+    results = search_res.json().get('results', [])
 
     if results:
+        # 2. 更新次數並檢查錯誤
         page_id = results[0]['id']
         current_count = results[0]['properties']['查詢次數']['number']
         if current_count is None:
@@ -96,10 +102,15 @@ def upsert_word():
             
         update_url = f"https://api.notion.com/v1/pages/{page_id}"
         update_payload = {"properties": {"查詢次數": {"number": current_count + 1}}}
-        requests.patch(update_url, json=update_payload, headers=HEADERS)
+        
+        update_res = requests.patch(update_url, json=update_payload, headers=HEADERS)
+        if update_res.status_code != 200:
+            return jsonify({"error": f"更新失敗: {update_res.json().get('message', '未知錯誤')}"}), 400
+            
         return jsonify({"status": "updated", "message": f"「{word}」已存在，次數已更新為 {current_count + 1}"})
 
     else:
+        # 3. 新增資料並檢查錯誤
         create_url = "https://api.notion.com/v1/pages"
         create_payload = {
             "parent": {"database_id": DATABASE_ID},
@@ -109,5 +120,8 @@ def upsert_word():
                 "查詢次數": {"number": 1}
             }
         }
-        requests.post(create_url, json=create_payload, headers=HEADERS)
+        create_res = requests.post(create_url, json=create_payload, headers=HEADERS)
+        if create_res.status_code != 200:
+            return jsonify({"error": f"新增失敗: {create_res.json().get('message', '未知錯誤')}"}), 400
+            
         return jsonify({"status": "created", "message": f"已新增單字「{word}」！"})
