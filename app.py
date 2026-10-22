@@ -32,16 +32,19 @@ def home():
     </head>
     <body>
         <div class="container">
-            <input type="text" id="word" placeholder="輸入單字 (如 OSPF)">
-            <input type="text" id="trans" placeholder="中文解釋 (新單字填)">
-            <button onclick="sendWord()">新增 / +1</button>
+            <input type="text" id="word" placeholder="輸入單字">
+            <input type="text" id="trans" placeholder="中文 (新單字必填)">
+            <button onclick="sendWord()">搜尋 / 新增</button>
             <span id="msg"></span>
         </div>
         <script>
             function sendWord() {
-                const word = document.getElementById('word').value.trim();
-                const trans = document.getElementById('trans').value.trim();
+                const wordInput = document.getElementById('word');
+                const transInput = document.getElementById('trans');
+                const word = wordInput.value.trim();
+                const trans = transInput.value.trim();
                 const msgSpan = document.getElementById('msg');
+                
                 if(!word) return;
                 
                 msgSpan.style.color = "#fbbf24";
@@ -54,13 +57,17 @@ def home():
                 .then(r => r.json())
                 .then(data => {
                     if (data.error) {
-                        msgSpan.style.color = "#f87171"; // 顯示紅色錯誤
+                        msgSpan.style.color = "#f87171"; // 顯示紅色錯誤提示
                         msgSpan.innerText = data.error;
+                        // 如果是新單字未填中文，自動將打字游標聚焦到「中文」欄位，且不清空單字
+                        if (data.need_translation) {
+                            transInput.focus();
+                        }
                     } else {
-                        msgSpan.style.color = "#4ade80"; // 顯示綠色成功
+                        msgSpan.style.color = "#4ade80"; // 顯示綠色成功訊息
                         msgSpan.innerText = data.message;
-                        document.getElementById('word').value = '';
-                        document.getElementById('trans').value = '';
+                        wordInput.value = '';
+                        transInput.value = '';
                         setTimeout(() => msgSpan.innerText = '', 4000);
                     }
                 })
@@ -77,8 +84,8 @@ def home():
 @app.route('/upsert_word', methods=['POST'])
 def upsert_word():
     data = request.json
-    word = data.get('word')
-    translation = data.get('translation', '')
+    word = data.get('word', '').strip()
+    translation = data.get('translation', '').strip()
 
     if not word:
         return jsonify({"error": "單字不能為空"}), 400
@@ -86,7 +93,7 @@ def upsert_word():
     search_url = f"https://api.notion.com/v1/databases/{DATABASE_ID}/query"
     search_payload = {"filter": {"property": "單字", "title": {"equals": word}}}
     
-    # 1. 搜尋單字並檢查錯誤
+    # 1. 搜尋單字是否存在
     search_res = requests.post(search_url, json=search_payload, headers=HEADERS)
     if search_res.status_code != 200:
         return jsonify({"error": f"搜尋失敗: {search_res.json().get('message', '未知錯誤')}"}), 400
@@ -94,7 +101,7 @@ def upsert_word():
     results = search_res.json().get('results', [])
 
     if results:
-        # 2. 更新次數並檢查錯誤
+        # 2. 單字已存在：直接將查詢次數 +1（不需要填寫中文解釋）
         page_id = results[0]['id']
         current_count = results[0]['properties']['查詢次數']['number']
         if current_count is None:
@@ -110,7 +117,14 @@ def upsert_word():
         return jsonify({"status": "updated", "message": f"「{word}」已存在，次數已更新為 {current_count + 1}"})
 
     else:
-        # 3. 新增資料並檢查錯誤
+        # 3. 單字不存在（新單字）：強制檢查是否有填寫中文解釋
+        if not translation:
+            return jsonify({
+                "error": f"「{word}」是新單字，請輸入中文解釋後再新增！",
+                "need_translation": True
+            }), 400
+
+        # 通過檢查後才寫入 Notion
         create_url = "https://api.notion.com/v1/pages"
         create_payload = {
             "parent": {"database_id": DATABASE_ID},
